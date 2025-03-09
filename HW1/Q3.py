@@ -22,16 +22,11 @@ class MVDataset(Dataset):
         self.ids = data[split]
         self.labels = data['label'][self.ids]
 
-        print("check categories", np.unique(self.labels))
-
         # resize images
         self.transform = transforms.Compose([
             transforms.Resize(self.target_size),
             transforms.ToTensor()
         ])
-
-
-        # print(len(self.data["train"]) + len(self.data["val"]) + len(self.data["test"]))
 
     def __len__(self):
         return len(self.ids)
@@ -47,9 +42,6 @@ class MVDataset(Dataset):
             image = image.convert('RGB') 
 
         image = self.transform(image)
-
-        # assert image.shape==(3,224,224), f"The image {id} has a wrong shape of {image.shape}"
-
         return image, self.labels[idx]
 
 
@@ -128,14 +120,15 @@ class CNN(nn.Module):
     def forward(self, x):
         return self.model(x)
     
+
 class LSTM(nn.Module):
     def __init__(self, output_size=20, patch_size=8):
         super().__init__()
 
         self.patch_size = patch_size # for square patches only
 
-        self.lstm = nn.LSTM(patch_size*patch_size*3, 512, num_layers=6, batch_first=True)
-        self.fc = nn.Linear(512, output_size)
+        self.lstm = nn.LSTM(patch_size*patch_size*3, 1024, num_layers=6, batch_first=True)
+        self.fc = nn.Linear(1024, output_size)
     
     def patchify(self, x):
         b, c, h, w = x.shape
@@ -158,43 +151,10 @@ class LSTM(nn.Module):
         
         out = self.fc(h_n[-1])
         return out
-    
-
-# class LSTM(nn.Module):
-#     def __init__(self, output_size=20, patch_size=8, image_size=224):
-#         super().__init__()
-
-#         self.patch_size = patch_size
-#         self.image_size = image_size
-#         self.num_patches = image_size // patch_size # for h or w
-
-#         self.lstm = nn.LSTM(patch_size*patch_size*3, 512, num_layers=6, batch_first=True)
-
-#         self.fc = nn.Linear(512, output_size)
-    
-#     def patchify(self, x):
-#         b, c, h, w = x.shape
-#         assert h==w and h==self.image_size, f"The input image must be of shape {self.image_size} x {self.image_size}"
-        
-#         patches = x.reshape(b, c, self.num_patches, self.patch_size, self.num_patches, self.patch_size)
-
-#         patches = patches.permute(0, 2, 4, 1, 3, 5) # to be b, nh, nw, c, ph, pw
-#         patches = patches.reshape(b, self.num_patches*self.num_patches, c*self.patch_size*self.patch_size) # to be b, m, n
-
-#         return patches
-
-#     def forward(self, x):
-
-#         patches = self.patchify(x)
-        
-#         _, (h_n, c_n) = self.lstm(patches)
-        
-#         out = self.fc(h_n[-1])
-#         return out
 
 
 class MVModel(pl.LightningModule):
-    def __init__(self, model_type, image_size=(224, 224), lr=1e-3):
+    def __init__(self, model_type, image_size=(224, 224), lr=1e-3, weight_decay=1e-5):
         super().__init__()
 
         h, w = image_size
@@ -207,10 +167,11 @@ class MVModel(pl.LightningModule):
             self.model = CNN(h, w, num_classes)
 
         elif model_type == "lstm":
-            self.model = LSTM(num_classes, 8, h)
+            self.model = LSTM(num_classes, 8)
 
         self.criterion = nn.CrossEntropyLoss()
         self.lr = lr
+        self.weight_decay = weight_decay
 
     def forward(self, x):
         return self.model(x) 
@@ -240,7 +201,7 @@ class MVModel(pl.LightningModule):
         return acc
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.lr)
+        return torch.optim.AdamW(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
 
 
 if __name__ == "__main__":
@@ -249,6 +210,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--learning_rate", type=float, default=1e-3)
+    parser.add_argument("--weight_decay", type=float, default=1e-5)
 
     args = parser.parse_args()
 
@@ -294,6 +256,7 @@ if __name__ == "__main__":
 
     trainer.fit(model, datamodule=datamodule)
 
+    print(f"Start testing for model {args.model_type} with lr {args.learning_rate} and weight decay {args.weight_decay}")
     # Load the best checkpoint after training
     best_model_path = checkpoint_callback.best_model_path
     best_model = MVModel.load_from_checkpoint(best_model_path, model_type=args.model_type)

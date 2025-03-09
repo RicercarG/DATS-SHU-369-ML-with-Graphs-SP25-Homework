@@ -22,6 +22,8 @@ class MVDataset(Dataset):
         self.ids = data[split]
         self.labels = data['label'][self.ids]
 
+        print("check categories", np.unique(self.labels))
+
         # resize images
         self.transform = transforms.Compose([
             transforms.Resize(self.target_size),
@@ -79,7 +81,7 @@ class MVDataModule(pl.LightningDataModule):
         return DataLoader(self.val_dataset, batch_size=self.batch_size)
     
     def test_dataloader(self):
-        return DataLoader(self.test_dataloader, batch_size=self.batch_size)
+        return DataLoader(self.test_dataset, batch_size=self.batch_size)
     
 
 # Start writing the models
@@ -88,15 +90,20 @@ class FCNN(nn.Module):
     def __init__(self, input_size, output_size=20):
         super().__init__()
 
-        self.model = nn.Sequential(
-            nn.Linear(input_size, 512),
-            nn.ReLU(),
-            nn.Linear(512, 256),
-            nn.ReLU(),
-            nn.Linear(256, 128),
-            nn.ReLU(),
-            nn.Linear(128, output_size)
-        )
+        layers = []
+        in_features = input_size
+        hidden_features = [1024, 512, 128]
+
+        for f in hidden_features:
+            layers.append(nn.Linear(in_features, f))
+            layers.append(nn.ReLU())
+            layers.append(nn.BatchNorm1d(f)) # add some tricks
+            layers.append(nn.Dropout(0.2))
+            in_features = f 
+
+        layers.append(nn.Linear(in_features, output_size))
+
+        self.model = nn.Sequential(*layers) 
 
     def forward(self, x):
         return self.model(x.view(x.size(0), -1)) # flatten input to 1d
@@ -121,27 +128,25 @@ class CNN(nn.Module):
     def forward(self, x):
         return self.model(x)
     
-
 class LSTM(nn.Module):
-    def __init__(self, output_size=20, patch_size=8, image_size=224):
+    def __init__(self, output_size=20, patch_size=8):
         super().__init__()
 
-        self.patch_size = patch_size
-        self.image_size = image_size
-        self.num_patches = image_size // patch_size # for h or w
+        self.patch_size = patch_size # for square patches only
 
-        self.lstm = nn.LSTM(patch_size*patch_size*3, 128, num_layers=6, batch_first=True)
-
-        self.fc = nn.Linear(128, output_size)
+        self.lstm = nn.LSTM(patch_size*patch_size*3, 512, num_layers=6, batch_first=True)
+        self.fc = nn.Linear(512, output_size)
     
     def patchify(self, x):
         b, c, h, w = x.shape
-        assert h==w and h==self.image_size, f"The input image must be of shape {self.image_size} x {self.image_size}"
-        
-        patches = x.reshape(b, c, self.num_patches, self.patch_size, self.num_patches, self.patch_size)
+        p = self.patch_size
+        nh = h // p
+        nw = w // p
 
-        patches = patches.permute(0, 2, 4, 1, 3, 5) # to be b, nh, nw, c, ph, pw
-        patches = patches.reshape(b, self.num_patches*self.num_patches, c*self.patch_size*self.patch_size) # to be b, m, n
+        patches = x.reshape(b, c, nh, p, nw, p)
+
+        patches = patches.permute(0, 2, 4, 1, 3, 5) # to be b, nh, nw, c, p, p
+        patches = patches.reshape(b, nh*nw, c*p*p) # to be b, m, n
 
         return patches
 
@@ -153,6 +158,39 @@ class LSTM(nn.Module):
         
         out = self.fc(h_n[-1])
         return out
+    
+
+# class LSTM(nn.Module):
+#     def __init__(self, output_size=20, patch_size=8, image_size=224):
+#         super().__init__()
+
+#         self.patch_size = patch_size
+#         self.image_size = image_size
+#         self.num_patches = image_size // patch_size # for h or w
+
+#         self.lstm = nn.LSTM(patch_size*patch_size*3, 512, num_layers=6, batch_first=True)
+
+#         self.fc = nn.Linear(512, output_size)
+    
+#     def patchify(self, x):
+#         b, c, h, w = x.shape
+#         assert h==w and h==self.image_size, f"The input image must be of shape {self.image_size} x {self.image_size}"
+        
+#         patches = x.reshape(b, c, self.num_patches, self.patch_size, self.num_patches, self.patch_size)
+
+#         patches = patches.permute(0, 2, 4, 1, 3, 5) # to be b, nh, nw, c, ph, pw
+#         patches = patches.reshape(b, self.num_patches*self.num_patches, c*self.patch_size*self.patch_size) # to be b, m, n
+
+#         return patches
+
+#     def forward(self, x):
+
+#         patches = self.patchify(x)
+        
+#         _, (h_n, c_n) = self.lstm(patches)
+        
+#         out = self.fc(h_n[-1])
+#         return out
 
 
 class MVModel(pl.LightningModule):
@@ -241,11 +279,11 @@ if __name__ == "__main__":
         filename='{epoch}-{val_acc:.2f}',
         monitor='val_acc',
         mode='max',
-        save_top_k=3, 
+        save_top_k=1, 
     )
 
     trainer = Trainer(
-        max_epochs=30,
+        max_epochs=args.epochs,
         accelerator=device,
         devices=1,
         precision=16,
@@ -255,5 +293,10 @@ if __name__ == "__main__":
     )
 
     trainer.fit(model, datamodule=datamodule)
+
+    # Load the best checkpoint after training
+    best_model_path = checkpoint_callback.best_model_path
+    best_model = MVModel.load_from_checkpoint(best_model_path, model_type=args.model_type)
+    trainer.test(best_model, datamodule=datamodule)
     
     

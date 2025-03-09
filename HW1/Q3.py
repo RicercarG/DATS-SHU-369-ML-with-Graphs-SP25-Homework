@@ -63,7 +63,7 @@ class MVDataModule(pl.LightningDataModule):
 
         self.data = torch.load(data_path, weights_only=False)
         self.image_dir = image_dir
-        self.target_size=target_size
+        self.target_size = target_size
 
         self.batch_size = batch_size
     
@@ -126,9 +126,9 @@ class LSTM(nn.Module):
     def __init__(self, output_size=20, patch_size=8, image_size=224):
         super().__init__()
 
-        self.patch_size = patch_size,
-        self.image_size = image_size,
-        self.num_patches = (image_size // patch_size) ** 2
+        self.patch_size = patch_size
+        self.image_size = image_size
+        self.num_patches = image_size // patch_size # for h or w
 
         self.lstm = nn.LSTM(patch_size*patch_size*3, 128, num_layers=6, batch_first=True)
 

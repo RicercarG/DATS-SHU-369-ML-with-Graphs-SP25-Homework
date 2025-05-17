@@ -1,5 +1,9 @@
 .DS_Store
+**/__pycache__/
 
 HW1/data/
 HW1/checkpoints/
 HW1/lightning_logs/
+HW3/generated/
+HW3/test_art/
+HW3/train_art/

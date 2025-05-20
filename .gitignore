@@ -7,3 +7,8 @@ HW1/lightning_logs/
 HW3/generated/
 HW3/test_art/
 HW3/train_art/
+FinalProject/gen_images/
+FinalProject/logs/
+FinalProject/checkpoints/
+FinalProject/datasets/
+FinalProject/wandb/
